@@ -1,20 +1,20 @@
 use std::vec::Vec;
 
 pub fn raindrops(n: u32) -> String {
-    let divisors = divisors_of(n);
+    let factors = factors_of(n);
     let mut text = String::new();
 
-    println!("{:?}", divisors);
+    println!("{:?}", factors);
 
-    if divisors.contains(&3) {
+    if factors.contains(&3) {
         text = format!("{}{}", text, "Pling");
     }
 
-    if divisors.contains(&5) {
+    if factors.contains(&5) {
         text = format!("{}{}", text, "Plang");
     }
 
-    if divisors.contains(&7) {
+    if factors.contains(&7) {
         text = format!("{}{}", text, "Plong");
     }
 
@@ -25,8 +25,8 @@ pub fn raindrops(n: u32) -> String {
     text
 }
 
-fn divisors_of(n: u32) -> Vec<u32> {
-    let mut divisors: Vec<u32> = Vec::new();
+fn factors_of(n: u32) -> Vec<u32> {
+    let mut factors: Vec<u32> = Vec::new();
     let end = (n as f64).sqrt() as u32;
 
     for x in 1..(end + 1) {
@@ -34,14 +34,14 @@ fn divisors_of(n: u32) -> Vec<u32> {
             continue;
         }
 
-        divisors.push(x);
+        factors.push(x);
 
-        if !divisors.contains(&(n / x)) {
-            divisors.push(n / x);
+        if !factors.contains(&(n / x)) {
+            factors.push(n / x);
         }
     }
 
-    divisors
+    factors
 }
 
 fn divisible(n: u32, divisor: u32) -> bool {
