@@ -17,7 +17,7 @@ impl<T> SimpleLinkedList<T> {
     pub fn len(&self) -> usize {
         match &self.head {
             None => 0,
-            Some(next_node) => len_node(&next_node) + 1,
+            Some(next_node) => &next_node.len() + 1,
         }
     }
 
@@ -29,7 +29,7 @@ impl<T> SimpleLinkedList<T> {
                     next: None,
                 }))
             }
-            Some(next_node) => push_node(next_node, element),
+            Some(next_node) => next_node.push(element),
         };
     }
 
@@ -41,7 +41,7 @@ impl<T> SimpleLinkedList<T> {
                     let popped_node = std::mem::replace(&mut self.head, None);
                     Some(popped_node.unwrap().value)
                 }
-                Some(_) => Some(pop_node(next_node)),
+                Some(_) => Some(next_node.pop()),
             },
         }
     }
@@ -49,46 +49,48 @@ impl<T> SimpleLinkedList<T> {
     pub fn peek(&self) -> Option<&T> {
         match &self.head {
             None => None,
-            Some(next_node) => Some(peek_node(&next_node)),
+            Some(next_node) => Some(next_node.peek()),
         }
     }
 }
 
-fn len_node<T>(node: &Box<Node<T>>) -> usize {
-    match &node.next {
-        None => 0,
-        Some(next_node) => len_node(&next_node) + 1,
-    }
-}
-
-fn push_node<T>(node: &mut Box<Node<T>>, element: T) {
-    match node.next.as_mut() {
-        None => {
-            node.next = Some(Box::new(Node {
-                value: element,
-                next: None,
-            }))
+impl<T> Node<T> {
+    fn len(&self) -> usize {
+        match &self.next {
+            None => 0,
+            Some(next_node) => &next_node.len() + 1,
         }
-        Some(next_node) => push_node(next_node, element),
-    };
-}
-
-fn pop_node<T>(node: &mut Box<Node<T>>) -> T {
-    let next_node = node.next.as_mut().unwrap();
-
-    match next_node.next.as_mut() {
-        None => {
-            let popped_node = std::mem::replace(&mut node.next, None);
-            popped_node.unwrap().value
-        }
-        Some(_) => pop_node(next_node),
     }
-}
 
-fn peek_node<T>(node: &Box<Node<T>>) -> &T {
-    match &node.next {
-        None => &node.value,
-        Some(next_node) => peek_node(next_node),
+    fn push(&mut self, element: T) {
+        match self.next.as_mut() {
+            None => {
+                self.next = Some(Box::new(Node {
+                    value: element,
+                    next: None,
+                }))
+            }
+            Some(next_node) => next_node.push(element),
+        };
+    }
+
+    fn pop(&mut self) -> T {
+        let next_node = self.next.as_mut().unwrap();
+
+        match next_node.next.as_mut() {
+            None => {
+                let popped_node = std::mem::replace(&mut self.next, None);
+                popped_node.unwrap().value
+            }
+            Some(_) => next_node.pop(),
+        }
+    }
+
+    fn peek(&self) -> &T {
+        match &self.next {
+            None => &self.value,
+            Some(next_node) => next_node.peek(),
+        }
     }
 }
 
