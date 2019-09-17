@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Read;
 use std::io::Write;
 
@@ -17,6 +18,7 @@ impl<'a> Executor<'a> {
         let mut memory = Memory::new();
         let ops = code.chars().collect::<Vec<_>>();
         let mut pc = 0;
+        let bracket_indices = search_bracket_indices(&ops);
 
         while pc < ops.len() {
             let op = ops[pc];
@@ -32,12 +34,12 @@ impl<'a> Executor<'a> {
                 ',' => memory.store(self.read_byte()),
                 '[' => {
                     if memory.load() == 0 {
-                        pc = next_bracket_r(code, pc).unwrap() + 1;
+                        pc = *bracket_indices.get(&pc).unwrap() + 1;
                         continue;
                     }
                 }
                 ']' => {
-                    pc = prev_bracket_l(code, pc).unwrap();
+                    pc = *bracket_indices.get(&pc).unwrap();
                     continue;
                 }
                 _ => {}
@@ -57,52 +59,42 @@ impl<'a> Executor<'a> {
     }
 }
 
-fn next_bracket_r(code: &str, pos_bracket_l: usize) -> Option<usize> {
-    match code.chars().nth(pos_bracket_l) {
-        Some('[') => {}
-        _ => panic!(),
-    };
+fn search_bracket_indices(code: &[char]) -> HashMap<usize, usize> {
+    let mut indices = HashMap::new();
 
-    let mut inner_brackets = 0;
+    for i in 0..code.len() {
+        if code[i] != '[' {
+            continue;
+        }
 
-    for ptr in (pos_bracket_l + 1)..code.len() {
-        match code.chars().nth(ptr) {
-            Some('[') => inner_brackets += 1,
-            Some(']') => {
-                if inner_brackets == 0 {
-                    return Some(ptr);
-                } else {
-                    inner_brackets -= 1;
-                }
-            }
-            Some(_) => {}
-            None => return None,
+        if let Some(other) = next_bracket_r(code, i) {
+            indices.insert(i, other);
+            indices.insert(other, i);
         }
     }
 
-    None
+    indices
 }
 
-fn prev_bracket_l(code: &str, pos_bracket_r: usize) -> Option<usize> {
-    match code.chars().nth(pos_bracket_r) {
-        Some(']') => {}
+fn next_bracket_r(code: &[char], pos_bracket_l: usize) -> Option<usize> {
+    match code[pos_bracket_l] {
+        '[' => {}
         _ => panic!(),
     };
 
     let mut inner_brackets = 0;
 
-    for ptr in (0..(pos_bracket_r - 1)).rev() {
-        match code.chars().nth(ptr) {
-            Some(']') => inner_brackets += 1,
-            Some('[') => {
+    for (ptr, op) in code.iter().enumerate().skip(pos_bracket_l + 1) {
+        match op {
+            '[' => inner_brackets += 1,
+            ']' => {
                 if inner_brackets == 0 {
                     return Some(ptr);
                 } else {
                     inner_brackets -= 1;
                 }
             }
-            Some(_) => {}
-            None => return None,
+            _ => {}
         }
     }
 
