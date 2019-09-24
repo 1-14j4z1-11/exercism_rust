@@ -1,0 +1,7 @@
+[package]
+name = "unix-cmd"
+version = "0.1.0"
+authors = ["hayashi <yasuhiro.yh.hayashi@nts.ricoh.co.jp>"]
+edition = "2018"
+
+[dependencies]
