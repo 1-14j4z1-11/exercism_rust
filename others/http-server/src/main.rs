@@ -1,5 +1,5 @@
 use http_server::{Method, Response, Server};
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, Arc};
 
 fn main() {
     let counter = Arc::new(Mutex::new(Counter::new()));

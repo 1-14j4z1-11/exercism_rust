@@ -1,47 +1,56 @@
 use crate::{Method, Request, Response};
 use std::str::FromStr;
+use std::sync::{Mutex, Arc};
+use std::thread;
+use std::borrow::Borrow;
 use tiny_http;
 
-pub struct Server<'a> {
+type RouteTable<'a> = Vec<(
+    Box<Fn(&Request) -> bool + Send + 'a>,
+    Box<Fn(&Request) -> Response + Send + 'a>,
+)>;
+
+pub struct Server {
     host: String,
     port: u16,
-    responders: Vec<(
-        Box<Fn(&Request) -> bool + 'a>,
-        Box<Fn(&Request) -> Response + 'a>,
-    )>,
+    table: RouteTable<'static>,
 }
 
-impl<'a> Server<'a> {
+impl Server {
     pub fn new(host: &str, port: u16) -> Self {
         Server {
             host: host.to_string(),
             port,
-            responders: vec![],
+            table: vec![],
         }
     }
 
     pub fn add<F, G>(&mut self, can_respond: F, respond: G)
     where
-        F: Fn(&Request) -> bool + 'a,
-        G: Fn(&Request) -> Response + 'a,
+        F: Fn(&Request) -> bool + Send + 'static,
+        G: Fn(&Request) -> Response + Send + 'static,
     {
-        self.responders
+        self.table
             .push((Box::new(can_respond), Box::new(respond)));
     }
 
     pub fn start(self) {
         let server = tiny_http::Server::http(format!("{}:{}", self.host, self.port)).unwrap();
+        let mutex_table = Arc::new(Mutex::new(self.table));
 
         for mut tiny_req in server.incoming_requests() {
-            let req = convert_from_tiny_request(&mut tiny_req);
-            let res = self.respond(&req);
-            let tiny_res = convert_to_tiny_response(&res);
-            tiny_req.respond(tiny_res).unwrap();
+            let clone_table = mutex_table.clone();
+            thread::spawn(move || {
+                let req = convert_from_tiny_request(&mut tiny_req);
+                let res = Self::respond(clone_table.lock().unwrap().borrow(), &req);
+                let tiny_res = convert_to_tiny_response(&res);
+                tiny_req.respond(tiny_res).unwrap();
+            });
         }
     }
 
-    fn respond(&self, req: &Request) -> Response {
-        for (can, res) in &self.responders {
+    fn respond(table: &RouteTable, req: &Request) -> Response {
+        for (can, res) in table {
             if !can(&req) {
                 continue;
             }
@@ -49,10 +58,10 @@ impl<'a> Server<'a> {
             return res(&req);
         }
 
-        self.default_response()
+        Self::default_response()
     }
 
-    fn default_response(&self) -> Response {
+    fn default_response() -> Response {
         Response::new(404)
     }
 }
