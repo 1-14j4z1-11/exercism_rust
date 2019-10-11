@@ -1,0 +1,8 @@
+[package]
+name = "http-server"
+version = "0.1.0"
+authors = ["hayashi <yasuhiro.yh.hayashi@nts.ricoh.co.jp>"]
+edition = "2018"
+
+[dependencies]
+tiny_http = "0.6"
