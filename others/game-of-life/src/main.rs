@@ -6,8 +6,9 @@ use std::str::FromStr;
 use std::iter::Iterator;
 use std::thread::sleep;
 use std::time::Duration;
+
 use clap::{App, Arg};
-use game_of_life::{GameModel, Rule};
+use game_of_life::{GameModel, Rule, console};
 
 fn main() {
     let app = App::new(crate_name!())
@@ -25,9 +26,14 @@ fn main() {
             .takes_value(true)
             .required(true))
         .arg(Arg::with_name("rule")
-            .help("Rule")
+            .help("Rule 'XX/YY' format. ex) 23/3, 23/36 (Default = 23/3)")
             .short("r")
             .long("rule")
+            .takes_value(true))
+        .arg(Arg::with_name("delay")
+            .help("Delay time [ms] (Default = 100)")
+            .short("d")
+            .long("delay")
             .takes_value(true));
 
     let args = match parse_args(app) {
@@ -39,7 +45,8 @@ fn main() {
 
     let path = args.0;
     let step = args.1;
-    let rule = args.2;
+    let delay = args.2;
+    let rule = args.3;
 
     let content = match read_file(&path) {
         Ok(lines) => lines,
@@ -55,7 +62,6 @@ fn main() {
     let mut model = match GameModel::from_str_lines(&input_lines.iter().skip(1).map(|l| l.as_ref()).collect::<Vec<_>>(), live_char, rule) {
         Some(m) => m,
         None => {
-            
             return
         },
     };
@@ -63,15 +69,18 @@ fn main() {
     for i in 0..step {
         let lines = model.to_str_lines(live_char, dead_char);
 
-        println!();
         println!("[{}]", i);
 
-        for l in lines {
+        for l in &lines {
             println!("{}", l);
         }
 
         model.next();
-        sleep(Duration::from_millis(200));
+        sleep(Duration::from_millis(delay as u64));
+        
+        if i != (step - 1) {
+            console::move_up(lines.len() + 1);
+        }
     }
 }
 
@@ -95,7 +104,7 @@ fn read_file(path: &str) -> Result<(char, char, Vec<String>), ()> {
     Ok((header_chars[0], header_chars[1], lines.into_iter().skip(1).collect::<Vec<_>>()))
 }
 
-fn parse_args(app: App) -> Result<(String, usize, Rule), ()> {
+fn parse_args(app: App) -> Result<(String, usize, usize, Rule), ()> {
     let matches = app.get_matches();
     let input = match matches.value_of("input_file") {
         Some(x) => x,
@@ -122,5 +131,17 @@ fn parse_args(app: App) -> Result<(String, usize, Rule), ()> {
         },
     };
 
-    Ok((input.to_string(), step, rule))
+    let delay = match matches.value_of("delay") {
+        None => 100,
+        Some(x) => match x.parse::<usize>() {
+            Ok(s) => if 1 <= s && s <= std::usize::MAX {
+                s
+            } else {
+                return Err(());
+            },
+            _ => return Err(()),
+        },
+    };
+
+    Ok((input.to_string(), step, delay, rule))
 }
