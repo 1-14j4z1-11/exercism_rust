@@ -79,7 +79,7 @@ impl GameModel {
         let mut model = Self::new(width, lines.len(), rule);
 
         for (y, &line) in lines.iter().enumerate() {
-            for (x, c) in line.chars().enumerate() {
+            for (x, c) in line.chars().take(width).enumerate() {
                 model.set(x, y, c == live);
             }
         }

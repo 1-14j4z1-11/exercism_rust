@@ -35,6 +35,8 @@ fn main() {
             .short("d")
             .long("delay")
             .takes_value(true));
+    
+    println!("{}", std::env::current_dir().unwrap().to_str().unwrap());
 
     let args = match parse_args(app) {
         Ok(x) => x,
@@ -50,8 +52,8 @@ fn main() {
 
     let content = match read_file(&path) {
         Ok(lines) => lines,
-        _ => {
-            println!("Could not open file : {}", path);
+        Err(msg) => {
+            println!("{}", msg);
             return
         },
     };
@@ -84,21 +86,21 @@ fn main() {
     }
 }
 
-fn read_file(path: &str) -> Result<(char, char, Vec<String>), ()> {
+fn read_file(path: &str) -> Result<(char, char, Vec<String>), String> {
     let lines = match std::fs::read_to_string(path) {
         Ok(text) => text.split(|c| c == '\r' || c == '\n').filter(|s| s.len() > 0).map(str::to_string).collect::<Vec<_>>(),
-        Err(_) => return Err(()),
+        Err(_) => return Err(format!("Could not open file : {}", path)),
     };
 
     let header = match lines.iter().nth(0) {
         Some(x) => x,
-        None => return Err(()),
+        None => return Err("Invalid file : No content".to_string()),
     };
 
     let header_chars = header.chars().collect::<Vec<_>>();
 
     if header_chars.len() != 2 {
-        return Err(());
+        return Err("Invalid header : first line must be include only two characters".to_string());
     }
 
     Ok((header_chars[0], header_chars[1], lines.into_iter().skip(1).collect::<Vec<_>>()))
