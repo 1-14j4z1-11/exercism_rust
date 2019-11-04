@@ -50,7 +50,7 @@ fn parse_recursive(text: &str, replace_map: &mut HashMap<String, String>) -> Res
         };
     }
 
-    if let Some(json_result) = match_array(text) {
+    if let Some(json_result) = match_array(text, replace_map) {
         return match json_result {
             Ok(json) => Ok(json),
             Err(msg) => Err(msg),
@@ -112,6 +112,46 @@ fn stash_strings(s: &str) -> (String, HashMap<String, String>) {
 fn remove_white_spaces(s: &str) -> String {
     let regex = Regex::from_str(r"\s+").unwrap();
     regex.replace_all(s, |_: &Captures| "").as_ref().to_string()
+}
+
+fn unescape_str(s: &str) -> Option<String> {
+    let escape_pattern = r#"u[0-9a-fA-F]{4}|."#;
+    let regex_escape = Regex::from_str(&format!(r"\\((?:\\\\)*)({0})", escape_pattern)).unwrap();
+
+    let escaped = regex_escape
+        .replace_all(s, |caps: &Captures| {
+            let symbol = caps.get(2).unwrap().as_str();
+
+            if let Some(cap_bs) = caps.get(1) {
+                let bs = cap_bs.as_str();
+                bs[0..(bs.len() / 2)].to_string() + &unescape_symbol(symbol)
+            } else {
+                unescape_symbol(symbol)
+            }
+        })
+        .to_string();
+
+    Some(escaped)
+}
+
+fn unescape_symbol(s: &str) -> String {
+    match s {
+        "\\" => "\\".to_string(),
+        "\"" => "\"".to_string(),
+        "/" => "/".to_string(),
+        "b" => "\x08".to_string(),
+        "f" => "\x0c".to_string(),
+        "n" => "\n".to_string(),
+        "r" => "\r".to_string(),
+        "t" => "\t".to_string(),
+        x if x.starts_with("u") => {
+            match std::char::from_u32(u32::from_str_radix(&x[1..], 16).unwrap()) {
+                Some(c) => format!("{}", c),
+                None => x.to_string(),
+            }
+        }
+        x => x.to_string(),
+    }
 }
 
 fn match_map(s: &str, replace_map: &mut HashMap<String, String>) -> Option<Result<Json, String>> {
@@ -183,11 +223,71 @@ fn match_map(s: &str, replace_map: &mut HashMap<String, String>) -> Option<Resul
                 _ => return Some(Err(format!("Invalid Key value pair : {} : {}", key, value))),
             };
         },
-        ((None, _), _) => {},
+        ((None, _), _) if obj.len() == 0 => {},
         ((ks, ke), vs) => return Some(Err(format!("Invalid sequence end in object : K = {:?}-{:?}, V = {:?}-End", ks, ke, vs))),
     }
 
     Some(Ok(Json::Object(Box::new(obj))))
+}
+
+fn match_array(s: &str, replace_map: &mut HashMap<String, String>) -> Option<Result<Json, String>> {
+    let chars = s.chars().collect::<Vec<_>>();
+    let end_index = chars.len() - 1;
+
+    if chars[0] != '[' {
+        return None;
+    }
+
+    match next_close_symbol(&chars, 0, '[', ']') {
+        Some(x) if x == end_index => {},
+        _ => return Some(Err(format!("Invalid array"))),
+    }
+    
+    let mut array = vec![];
+    let mut value_start = None;
+    let mut depth = 0;
+    
+    for ptr in 1..end_index {
+        match (depth, chars[ptr]) {
+            (0, ',') => match value_start {
+                Some(vs) => {
+                    let value = chars[vs..ptr].iter().collect::<String>();
+                    match parse_recursive(&value, replace_map) {
+                        Ok(v) => array.push(v),
+                        _ => return Some(Err(format!("Invalid value = {} ", value))),
+                    };
+                    value_start = None;
+                },
+                _ => return Some(Err(format!("Invalid symbol : ','"))),
+            },
+            (_, '[') => match value_start {
+                None => {
+                    value_start = Some(ptr);
+                    depth += 1;
+                },
+                _ => depth += 1,
+            },
+            (_, ']') => depth -= 1,
+            _ => match value_start {
+                None => value_start = Some(ptr),
+                _ => {},
+            },
+        }
+    }
+
+    match value_start {
+        Some(vs) => {
+            let value = chars[vs..end_index].iter().collect::<String>();
+            match parse_recursive(&value, replace_map) {
+                Ok(v) => array.push(v),
+                _ => return Some(Err(format!("Invalid value = {} ", value))),
+            };
+        },
+        _ if array.len() == 0 => {},
+        _ => return Some(Err("Invalid symbol ','".to_string())),
+    }
+
+    Some(Ok(Json::Array(array)))
 }
 
 fn next_close_symbol(code: &[char], pos_open: usize, open: char, close: char) -> Option<usize> {
@@ -212,50 +312,6 @@ fn next_close_symbol(code: &[char], pos_open: usize, open: char, close: char) ->
     }
 
     None
-}
-
-fn match_array(_s: &str) -> Option<Result<Json, String>> {
-    None
-}
-
-fn unescape_str(s: &str) -> Option<String> {
-    let escape_pattern = r#"u[0-9a-fA-F]{4}|."#;
-    let regex_escape = Regex::from_str(&format!(r"\\((?:\\\\)*)({0})", escape_pattern)).unwrap();
-
-    let escaped = regex_escape
-        .replace_all(s, |caps: &Captures| {
-            let symbol = caps.get(2).unwrap().as_str();
-
-            if let Some(cap_bs) = caps.get(1) {
-                let bs = cap_bs.as_str();
-                bs[0..(bs.len() / 2)].to_string() + &unescape_symbol(symbol)
-            } else {
-                unescape_symbol(symbol)
-            }
-        })
-        .to_string();
-
-    Some(escaped)
-}
-
-fn unescape_symbol(s: &str) -> String {
-    match s {
-        "\\" => "\\".to_string(),
-        "\"" => "\"".to_string(),
-        "/" => "/".to_string(),
-        "b" => "\x08".to_string(),
-        "f" => "\x0c".to_string(),
-        "n" => "\n".to_string(),
-        "r" => "\r".to_string(),
-        "t" => "\t".to_string(),
-        x if x.starts_with("u") => {
-            match std::char::from_u32(u32::from_str_radix(&x[1..], 16).unwrap()) {
-                Some(c) => format!("{}", c),
-                None => x.to_string(),
-            }
-        }
-        x => x.to_string(),
-    }
 }
 
 #[test]
@@ -326,6 +382,31 @@ fn test_single_content() {
     }
 }
 
+#[test]
+fn test_invalid_single_content() {
+    let testcases = [
+        "Null",
+        "True",
+        "False",
+        "10.",
+        "-1.25.0",
+        "+-12.125",
+        "-12.125e10.8",
+        "12.125E10.",
+        r#"A"""#,
+        r#"""A"#,
+        r#"A"""#,
+        r#"""""#,
+        r#""\""#,
+        r#""\\"""#,
+        r#""\"\\"\""#,
+    ];
+
+    for input in &testcases {
+        assert_eq!(parse(input).is_err(), true);
+    }
+}
+
 macro_rules! map {
     ( $( $t:expr),* ) => {
         {
@@ -380,6 +461,23 @@ fn test_object() {
 }
 
 #[test]
+fn test_invalid_object() {
+    let testcases = [
+        r#"{ "key" : "value" "#,
+        r#" "key" : "value" }"#,
+        r#"{ "key"  "value" }"#,
+        r#"{ "key" , "value" }"#,
+        r#"{ "key" : {"value"} }"#,
+        r#"{ "key1" : "value1" }, { "key2" : "value2" }"#,
+        r#"{ "key1" : "value1", "key2" : "value2", }"#,
+    ];
+
+    for input in &testcases {
+        assert_eq!(parse(input).is_err(), true, "'{}' is invalid, but parse() returns ok.", input);
+    }
+}
+
+#[test]
 fn test_array() {
     let testcases = vec![
         ("[]", Json::Array(vec![])),
@@ -389,6 +487,26 @@ fn test_array() {
                 Json::String("A".to_string()),
                 Json::String("B".to_string()),
                 Json::String("C".to_string()),
+            ]),
+        ),
+        (
+            r#"["A", "B", [ "C1", "C2", "C3", ["D1", "D2"] ], ["E"], []]"#,
+            Json::Array(vec![
+                Json::String("A".to_string()),
+                Json::String("B".to_string()),
+                Json::Array(vec![
+                    Json::String("C1".to_string()),
+                    Json::String("C2".to_string()),
+                    Json::String("C3".to_string()),
+                    Json::Array(vec![
+                        Json::String("D1".to_string()),
+                        Json::String("D2".to_string()),
+                    ]),
+                ]),
+                Json::Array(vec![
+                    Json::String("E".to_string()),
+                ]),
+                Json::Array(vec![]),
             ]),
         ),
     ];
@@ -401,26 +519,17 @@ fn test_array() {
 }
 
 #[test]
-fn test_invalid_single_content() {
+fn test_invalid_array() {
     let testcases = [
-        "Null",
-        "True",
-        "False",
-        "10.",
-        "-1.25.0",
-        "+-12.125",
-        "-12.125e10.8",
-        "12.125E10.",
-        r#"A"""#,
-        r#"""A"#,
-        r#"A"""#,
-        r#"""""#,
-        r#""\""#,
-        r#""\\"""#,
-        r#""\"\\"\""#,
+        r#"[ value" "#,
+        r#" value" ]"#,
+        r#"[ "value" ]]"#,
+        r#"[ "key" : "value" ]"#,
+        r#"[ "value1" ], [ value2" ]"#,
+        r#"[ "value1", "value2", ]"#,
     ];
 
     for input in &testcases {
-        assert_eq!(parse(input).is_err(), true);
+        assert_eq!(parse(input).is_err(), true, "'{}' is invalid, but parse() returns ok.", input);
     }
 }
