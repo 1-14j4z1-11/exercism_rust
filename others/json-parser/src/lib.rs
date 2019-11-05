@@ -115,21 +115,40 @@ fn remove_white_spaces(s: &str) -> String {
 }
 
 fn unescape_str(s: &str) -> Option<String> {
-    let escape_pattern = r#"u[0-9a-fA-F]{4}|."#;
-    let regex_escape = Regex::from_str(&format!(r"\\((?:\\\\)*)({0})", escape_pattern)).unwrap();
+    let regex_surrogate = Regex::from_str(r"([^\\](?:\\\\)*)\\u([0-9a-fA-F]{4})\\u([0-9a-fA-F]{4})").unwrap();
+    let regex_escape = Regex::from_str(r#"(^|[^\\])((?:\\\\)*)\\(u[0-9a-fA-F]{4}|.)"#).unwrap();
+    let regex_unicode = Regex::from_str(r"(^|[^\\](?:\\\\)*)\\u([0-9a-fA-F]{4})").unwrap();
 
-    let escaped = regex_escape
+    let s = regex_surrogate
         .replace_all(s, |caps: &Captures| {
-            let symbol = caps.get(2).unwrap().as_str();
+            let u1 = u32::from_str_radix(caps.get(2).unwrap().as_str(), 16).unwrap();
+            let u2 = u32::from_str_radix(caps.get(3).unwrap().as_str(), 16).unwrap();
 
-            if let Some(cap_bs) = caps.get(1) {
-                let bs = cap_bs.as_str();
-                bs[0..(bs.len() / 2)].to_string() + &unescape_symbol(symbol)
+            if u1 < 0xD800 {
+                let c = std::char::from_digit(u1, 10).unwrap();
+                format!("{}{}\\u{}", caps.get(1).unwrap().as_str(), c, caps.get(3).unwrap().as_str())
+            } else if 0xD800 <= u1 && u1 <= 0xDBFF && 0xDC00 <= u2 && u2 <= 0xDFFF {
+                let u = 0x10000 + (u1 - 0xD800) * 0x400 + (u2 - 0xDC00);
+                let c = std::char::from_digit(u, 10).unwrap();
+                format!("{}{}", caps.get(1).unwrap().as_str(), c)
             } else {
-                unescape_symbol(symbol)
+                caps.get(0).unwrap().as_str().to_string()
             }
         })
         .to_string();
+    
+    let escaped = regex_escape
+        .replace_all(&s, |caps: &Captures| {
+            let symbol = caps.get(3).unwrap().as_str();
+            let bs =  caps.get(2).unwrap().as_str();
+
+            format!("{}{}{}", caps.get(1).unwrap().as_str(), bs[0..(bs.len() / 2)].to_string(), unescape_symbol(symbol))
+        })
+        .to_string();
+
+    if regex_unicode.is_match(&escaped) {
+        return None;
+    }
 
     Some(escaped)
 }
@@ -193,7 +212,7 @@ fn match_map(s: &str, replace_map: &mut HashMap<String, String>) -> Option<Resul
                 },
                 _ => return Some(Err(format!("Invalid symbol : ','"))),
             },
-            (_, '{') => match (key_range, value_start) {
+            (_, '{') | (_, '[') => match (key_range, value_start) {
                 ((None, _), _) => return Some(Err(format!("Invalid symbol : '{{'"))),
                 ((Some(_), Some(_)), None) => {
                     value_start = Some(ptr);
@@ -201,7 +220,7 @@ fn match_map(s: &str, replace_map: &mut HashMap<String, String>) -> Option<Resul
                 },
                 _ => depth += 1,
             },
-            (_, '}') => depth -= 1,
+            (_, '}') | (_, ']') => depth -= 1,
             _ => match (key_range, value_start) {
                 ((None, _), _) => {
                     key_range = (Some(ptr), None);
@@ -260,14 +279,14 @@ fn match_array(s: &str, replace_map: &mut HashMap<String, String>) -> Option<Res
                 },
                 _ => return Some(Err(format!("Invalid symbol : ','"))),
             },
-            (_, '[') => match value_start {
+            (_, '[') | (_, '{') => match value_start {
                 None => {
                     value_start = Some(ptr);
                     depth += 1;
                 },
                 _ => depth += 1,
             },
-            (_, ']') => depth -= 1,
+            (_, ']') | (_, '}') => depth -= 1,
             _ => match value_start {
                 None => value_start = Some(ptr),
                 _ => {},
@@ -398,12 +417,13 @@ fn test_invalid_single_content() {
         r#"A"""#,
         r#"""""#,
         r#""\""#,
+        r#""\\u1234""#,
         r#""\\"""#,
         r#""\"\\"\""#,
     ];
 
     for input in &testcases {
-        assert_eq!(parse(input).is_err(), true);
+        assert_eq!(parse(input).is_err(), true, "'{}' is invalid, but parse() returns ok.", input);
     }
 }
 
@@ -447,6 +467,20 @@ fn test_object() {
                         ("3".to_string(), Json::Boolean(true))
                     ]))),
                     ("k2".to_string(), Json::Number(-0.1))
+                ]))),
+                ("k1".to_string(), Json::String("string".to_string()))
+            ])),
+        ),
+        (
+            r#"{ "1": { "2" : { "3" : true }, "k2" : [ "V1", "V2" ] }, "k1" : "string" }"#,
+            Json::Object(Box::new(map![
+                ("1".to_string(), Json::Object(Box::new(map![
+                    ("2".to_string(), Json::Object(Box::new(map![
+                        ("3".to_string(), Json::Boolean(true))
+                    ]))),
+                    ("k2".to_string(), Json::Array(
+                        vec![Json::String("V1".to_string()),
+                            Json::String("V2".to_string())]))
                 ]))),
                 ("k1".to_string(), Json::String("string".to_string()))
             ])),
@@ -502,6 +536,28 @@ fn test_array() {
                         Json::String("D1".to_string()),
                         Json::String("D2".to_string()),
                     ]),
+                ]),
+                Json::Array(vec![
+                    Json::String("E".to_string()),
+                ]),
+                Json::Array(vec![]),
+            ]),
+        ),
+        (
+            r#"["A", "B", [ "C1", "C2", "C3", {"D1" : "D2"}, {"E1" : "E2"} ], ["E"], []]"#,
+            Json::Array(vec![
+                Json::String("A".to_string()),
+                Json::String("B".to_string()),
+                Json::Array(vec![
+                    Json::String("C1".to_string()),
+                    Json::String("C2".to_string()),
+                    Json::String("C3".to_string()),
+                    Json::Object(Box::new(map![
+                        ("D1".to_string(), Json::String("D2".to_string()))
+                    ])),
+                    Json::Object(Box::new(map![
+                        ("E1".to_string(), Json::String("E2".to_string()))
+                    ])),
                 ]),
                 Json::Array(vec![
                     Json::String("E".to_string()),
