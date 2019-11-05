@@ -60,6 +60,28 @@ fn parse_recursive(text: &str, replace_map: &mut HashMap<String, String>) -> Res
     Err(format!("Unknown format"))
 }
 
+fn stash_strings(s: &str) -> (String, HashMap<String, String>) {
+    let regex = Regex::from_str(r#""((\\\\)*(\\.)?([^"\\]+)?)*""#).unwrap();
+    let mut index = 0;
+    let mut map = HashMap::new();
+
+    let replaced_str = regex.replace_all(s, |caps: &Captures| {
+        let raw_str = caps.get(0).unwrap().as_str();
+        let unwrapped_str = raw_str[1..(raw_str.len() - 1)].to_string();
+        let replace = format!("${}", index);
+        map.insert(replace.clone(), unwrapped_str);
+        index += 1;
+        replace
+    }).as_ref().to_string();
+
+    (replaced_str, map)
+}
+
+fn remove_white_spaces(s: &str) -> String {
+    let regex = Regex::from_str(r"\s+").unwrap();
+    regex.replace_all(s, |_: &Captures| "").as_ref().to_string()
+}
+
 fn match_number(s: &str) -> Option<Json> {
     let regex = Regex::from_str(r"^\s*([+\-]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)\s*$").unwrap();
 
@@ -92,85 +114,79 @@ fn match_stashed_str(s: &str, replace_map: &mut HashMap<String, String>) -> Opti
     }
 }
 
-fn stash_strings(s: &str) -> (String, HashMap<String, String>) {
-    let regex = Regex::from_str(r#""((\\\\)*(\\.)?([^"\\]+)?)*""#).unwrap();
-    let mut index = 0;
-    let mut map = HashMap::new();
-
-    let replaced_str = regex.replace_all(s, |caps: &Captures| {
-        let raw_str = caps.get(0).unwrap().as_str();
-        let unwrapped_str = raw_str[1..(raw_str.len() - 1)].to_string();
-        let replace = format!("${}", index);
-        map.insert(replace.clone(), unwrapped_str);
-        index += 1;
-        replace
-    }).as_ref().to_string();
-
-    (replaced_str, map)
-}
-
-fn remove_white_spaces(s: &str) -> String {
-    let regex = Regex::from_str(r"\s+").unwrap();
-    regex.replace_all(s, |_: &Captures| "").as_ref().to_string()
-}
-
 fn unescape_str(s: &str) -> Option<String> {
-    let regex_surrogate = Regex::from_str(r"([^\\](?:\\\\)*)\\u([0-9a-fA-F]{4})\\u([0-9a-fA-F]{4})").unwrap();
-    let regex_escape = Regex::from_str(r#"(^|[^\\])((?:\\\\)*)\\(u[0-9a-fA-F]{4}|.)"#).unwrap();
-    let regex_unicode = Regex::from_str(r"(^|[^\\](?:\\\\)*)\\u([0-9a-fA-F]{4})").unwrap();
+    let chars = s.chars().collect::<Vec<_>>();
+    let mut unescaped_str = String::new();
+    let mut escaping = false;
+    let mut i = 0;
 
-    let s = regex_surrogate
-        .replace_all(s, |caps: &Captures| {
-            let u1 = u32::from_str_radix(caps.get(2).unwrap().as_str(), 16).unwrap();
-            let u2 = u32::from_str_radix(caps.get(3).unwrap().as_str(), 16).unwrap();
+    while i < chars.len() {
+        let c = chars[i];
 
-            if u1 < 0xD800 {
-                let c = std::char::from_digit(u1, 10).unwrap();
-                format!("{}{}\\u{}", caps.get(1).unwrap().as_str(), c, caps.get(3).unwrap().as_str())
-            } else if 0xD800 <= u1 && u1 <= 0xDBFF && 0xDC00 <= u2 && u2 <= 0xDFFF {
-                let u = 0x10000 + (u1 - 0xD800) * 0x400 + (u2 - 0xDC00);
-                let c = std::char::from_digit(u, 10).unwrap();
-                format!("{}{}", caps.get(1).unwrap().as_str(), c)
-            } else {
-                caps.get(0).unwrap().as_str().to_string()
-            }
-        })
-        .to_string();
-    
-    let escaped = regex_escape
-        .replace_all(&s, |caps: &Captures| {
-            let symbol = caps.get(3).unwrap().as_str();
-            let bs =  caps.get(2).unwrap().as_str();
+        match (c, escaping) {
+            ('\\', false) => {},
+            ('\\', true) => unescaped_str.push('\\'),
+            ('\"', true) => unescaped_str.push('\"'),
+            ('/', true) => unescaped_str.push('/'),
+            ('b', true) => unescaped_str.push('\x08'),
+            ('f', true) => unescaped_str.push('\x0c'),
+            ('n', true) => unescaped_str.push('\n'),
+            ('r', true) => unescaped_str.push('\r'),
+            ('t', true) => unescaped_str.push('\t'),
+            ('u', true) => {
+                match unescape_unicode(&chars, i - 1) {
+                    None => return None,
+                    Some((c, seek)) => {
+                        unescaped_str.push(c);
+                        i += seek - 1;
+                    },
+                }
+            },
+            (c, false) => unescaped_str.push(c),
+            (_, true) => return None,
+        }
+        
+        if c == '\\' || escaping {
+            escaping = !escaping;
+        }
 
-            format!("{}{}{}", caps.get(1).unwrap().as_str(), bs[0..(bs.len() / 2)].to_string(), unescape_symbol(symbol))
-        })
-        .to_string();
+        i += 1;
+    }
 
-    if regex_unicode.is_match(&escaped) {
+    Some(unescaped_str)
+}
+
+fn unescape_unicode(chars: &[char], i: usize) -> Option<(char, usize)> {
+    if chars.len() < i + 6 || chars[i] != '\\' || chars[i + 1] != 'u' {
         return None;
     }
 
-    Some(escaped)
-}
+    let u1 = match u32::from_str_radix(&chars[(i + 2)..(i + 6)].iter().collect::<String>(), 16) {
+        Ok(x) => x,
+        Err(_) => return None,
+    };
 
-fn unescape_symbol(s: &str) -> String {
-    match s {
-        "\\" => "\\".to_string(),
-        "\"" => "\"".to_string(),
-        "/" => "/".to_string(),
-        "b" => "\x08".to_string(),
-        "f" => "\x0c".to_string(),
-        "n" => "\n".to_string(),
-        "r" => "\r".to_string(),
-        "t" => "\t".to_string(),
-        x if x.starts_with("u") => {
-            match std::char::from_u32(u32::from_str_radix(&x[1..], 16).unwrap()) {
-                Some(c) => format!("{}", c),
-                None => x.to_string(),
-            }
-        }
-        x => x.to_string(),
+    if u1 < 0xD800 {
+        return Some((std::char::from_u32(u1).unwrap(), 6));
+    } else if 0xDBFF < u1 {
+        return None;
     }
+
+    if chars.len() < i + 11 || chars[i + 6] != '\\' || chars[i + 7] != 'u' {
+        return None;
+    }
+
+    let u2 = match u32::from_str_radix(&chars[(i + 8)..(i + 12)].iter().collect::<String>(), 16) {
+        Ok(x) => x,
+        Err(_) => return None,
+    };
+    
+    if u2 < 0xDC00 || 0xDFFF < u2 {
+        return None;
+    }
+
+    let u = 0x10000 + (u1 - 0xD800) * 0x400 + (u2 - 0xDC00);
+    return Some((std::char::from_u32(u).unwrap(), 12));
 }
 
 fn match_map(s: &str, replace_map: &mut HashMap<String, String>) -> Option<Result<Json, String>> {
@@ -362,18 +378,24 @@ fn test_single_content() {
         (r#""\f""#, Json::String("\x0c".to_string())),
         (r#""\t""#, Json::String("\t".to_string())),
         (r#""\u004f""#, Json::String("\x4f".to_string())),
+        (r#""\uD800\uDC00""#, Json::String("\u{10000}".to_string())),
+        (r#""\udbff\udfff""#, Json::String("\u{10FFFF}".to_string())),
+        (r#""\\uDC00""#, Json::String("\\uDC00".to_string())),
+        (r#""\\uDBFF\\uE000""#, Json::String("\\uDBFF\\uE000".to_string())),
+        (r#""\\uDBFF\\uDBFF""#, Json::String("\\uDBFF\\uDBFF".to_string())),
+        (r#""\\u1234""#, Json::String("\\u1234".to_string())),
         (
             r#""あいうえお""#,
             Json::String("あいうえお".to_string()),
         ),
         (r#""𪗱𪘚""#, Json::String("𪗱𪘚".to_string())),
-        //(r#""\uD867\uDE3D""#, Json::String("𩸽".to_string())),
+        (r#""\uD867\uDE3D""#, Json::String("𩸽".to_string())),
         (r#""\\\\""#, Json::String(r"\\".to_string())),
         (r#""\\\\\"""#, Json::String(r#"\\""#.to_string())),
         (r#""\\\r""#, Json::String("\\\r".to_string())),
         (
-            r#""\\\\\n\\\f\\""#,
-            Json::String("\\\\\n\\\x0c\\".to_string()),
+            r#""\\\\\n\\\t\\\f""#,
+            Json::String("\\\\\n\\\t\\\x0c".to_string()),
         ),
         (r#""\\\\\\\t""#, Json::String("\\\\\\\t".to_string())),
         (
@@ -386,7 +408,7 @@ fn test_single_content() {
             Json::String("\\\\\\n\\\\f\\".to_string()),
         ),
         (r#""\\\\\\\\t""#, Json::String("\\\\\\\\t".to_string())),
-        (r#""\\\\\\\v""#, Json::String("\\\\\\v".to_string())),
+        (r#""\\\\\\v""#, Json::String("\\\\\\v".to_string())),
     ];
 
     for (input, exp) in &testcases {
@@ -417,9 +439,13 @@ fn test_invalid_single_content() {
         r#"A"""#,
         r#"""""#,
         r#""\""#,
-        r#""\\u1234""#,
         r#""\\"""#,
         r#""\"\\"\""#,
+        r#""\\\\\\\v""#,
+        r#""\uD800""#,
+        r#""\uDC00""#,
+        r#""\uDBFF\uE000""#,
+        r#""\uDBFF\uDBFF""#,
     ];
 
     for input in &testcases {
