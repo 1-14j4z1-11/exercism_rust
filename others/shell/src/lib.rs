@@ -1,2 +1,5 @@
 pub mod program;
-pub use program::Program;
+pub mod sequence;
+
+use program::Program;
+pub use sequence::Sequence;
