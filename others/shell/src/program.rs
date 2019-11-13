@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::env;
 use std::io::Write;
 use std::iter::Iterator;
 use std::process::{Command, Output, Stdio};
@@ -18,12 +16,18 @@ impl Program {
         }
     }
 
-    pub fn run(&self, input: &[u8]) -> std::io::Result<Output> {
-        let envs = env::vars().collect::<HashMap<String, String>>();
+    pub fn run_with_stdin(&self) -> std::io::Result<Output> {
+        let prog = Command::new(self.shell)
+            .args(&self.args)
+            .stdout(Stdio::piped())
+            .spawn()?;
+
+        prog.wait_with_output()
+    }
+
+    pub fn run_with_input(&self, input: &[u8]) -> std::io::Result<Output> {
         let mut prog = Command::new(self.shell)
             .args(&self.args)
-            .current_dir(".")
-            .envs(&envs)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()?;

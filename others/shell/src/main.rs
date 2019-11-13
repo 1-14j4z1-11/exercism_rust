@@ -2,7 +2,7 @@ extern crate encoding_rs;
 extern crate shell;
 
 use shell::Sequence;
-use std::io::{self, BufRead, Write};
+use std::io::{BufRead, Write};
 use std::str::FromStr;
 
 fn main() {
@@ -21,7 +21,7 @@ fn main() {
 
         match Sequence::from_str(line) {
             Ok(seq) => seq.run(),
-            Err(_) => writeln!(io::stderr(), "Invalid command").unwrap(),
+            Err(_) => eprintln!("Invalid command"),
         };
     }
 }
@@ -29,7 +29,7 @@ fn main() {
 fn remove_newline(s: &str) -> &str {
     if s.ends_with("\r\n") {
         s.get(0..s.len() - 2).unwrap()
-    } else if s.ends_with("\n") || s.ends_with("\r") {
+    } else if s.ends_with('\n') || s.ends_with('\r') {
         s.get(0..s.len() - 1).unwrap()
     } else {
         s

@@ -9,49 +9,61 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::str::FromStr;
 
+enum Input {
+    Stdin,
+    Reader(Box<dyn Read>),
+}
+
 pub struct Sequence {
-    input: Box<dyn Read>,
+    input: Input,
     out: Box<dyn Write>,
     err: Option<Box<dyn Write>>,
     programs: Vec<Program>,
 }
 
 impl Sequence {
-    pub fn new_with_stderr(
-        input: Box<dyn Read>,
+    fn new_with_stderr(
+        input: Input,
         out: Box<dyn Write>,
         err: Box<dyn Write>,
         programs: Vec<Program>,
     ) -> Self {
         Sequence {
-            input: input,
-            out: out,
+            input,
+            out,
             err: Some(err),
-            programs: programs,
+            programs,
         }
     }
 
-    pub fn new_without_stderr(
-        input: Box<dyn Read>,
-        out: Box<dyn Write>,
-        programs: Vec<Program>,
-    ) -> Self {
+    fn new_without_stderr(input: Input, out: Box<dyn Write>, programs: Vec<Program>) -> Self {
         Sequence {
-            input: input,
-            out: out,
+            input,
+            out,
             err: None,
-            programs: programs,
+            programs,
         }
     }
 
     pub fn run(mut self) {
-        let mut pipe_buf = vec![];
-        self.input.read_to_end(&mut pipe_buf).unwrap();
+        let mut pipe_buf: Option<Vec<u8>> = None;
 
         for prog in &self.programs {
-            match prog.run(&pipe_buf) {
+            let run_result = match pipe_buf {
+                None => match &mut self.input {
+                    Input::Stdin => prog.run_with_stdin(),
+                    Input::Reader(r) => {
+                        let mut buf = vec![];
+                        r.read_to_end(&mut buf).unwrap();
+                        prog.run_with_input(&buf)
+                    }
+                },
+                Some(buf) => prog.run_with_input(&buf),
+            };
+
+            match run_result {
                 Err(_) => {
-                    writeln!(io::stderr(), "Could not run command : {:?}", prog).unwrap();
+                    eprintln!("Could not run command : {:?}", prog);
                     return;
                 }
                 Ok(o) => {
@@ -65,16 +77,14 @@ impl Sequence {
                         }
                         return;
                     } else {
-                        pipe_buf.clear();
-                        pipe_buf
-                            .write_all(&convert_to_utf8_if_sjis(o.stdout))
-                            .unwrap();
+                        let buf = convert_to_utf8_if_sjis(o.stdout);
+                        pipe_buf = Some(buf);
                     }
                 }
             }
         }
 
-        self.out.write_all(&pipe_buf).unwrap();
+        self.out.write_all(&pipe_buf.unwrap_or_default()).unwrap();
     }
 }
 
@@ -106,18 +116,14 @@ impl FromStr for Sequence {
             Some((&words[idx..end], end))
         };
 
-        let mut stdin = None;
+        let mut input = Input::Stdin;
         let mut stdout = None;
         let mut stderr = None;
         let mut err_to_out = false;
         let mut index = 0;
 
         while index < words.len() {
-            let i = if index == 0 {
-                0
-            } else {
-                index + 1
-            };
+            let i = if index == 0 { 0 } else { index + 1 };
             match get_args_to_next_sep(i) {
                 None => match words[index] {
                     "2>&1" => err_to_out = true,
@@ -135,7 +141,7 @@ impl FromStr for Sequence {
                         },
                         "<" => match create_reader(args) {
                             Err(_) => return Err(()),
-                            Ok(r) => stdin = Some(r),
+                            Ok(r) => input = Input::Reader(r),
                         },
                         ">" | "1>" => match create_writer(args, false) {
                             Err(_) => return Err(()),
@@ -170,15 +176,15 @@ impl FromStr for Sequence {
 
         if err_to_out {
             Ok(Sequence::new_without_stderr(
-                stdin.unwrap_or(Box::new(io::stdin())),
-                stdout.unwrap_or(Box::new(io::stdout())),
+                input,
+                stdout.unwrap_or_else(|| Box::new(io::stdout())),
                 progs,
             ))
         } else {
             Ok(Sequence::new_with_stderr(
-                stdin.unwrap_or(Box::new(io::stdin())),
-                stdout.unwrap_or(Box::new(io::stdout())),
-                stderr.unwrap_or(Box::new(io::stderr())),
+                input,
+                stdout.unwrap_or_else(|| Box::new(io::stdout())),
+                stderr.unwrap_or_else(|| Box::new(io::stderr())),
                 progs,
             ))
         }
@@ -218,10 +224,10 @@ fn create_writer(args: &[&str], append: bool) -> Result<Box<dyn Write>, ()> {
 }
 
 fn parse_to_program(words: &[&str]) -> Option<Program> {
-    if words.len() == 0 {
+    if words.is_empty() {
         None
     } else if words.len() == 1 {
-        Some(Program::new(words[0], &vec![]))
+        Some(Program::new(words[0], &[]))
     } else {
         Some(Program::new(words[0], &words[1..words.len()]))
     }
@@ -280,6 +286,6 @@ fn convert_to_utf8_if_sjis(buf: Vec<u8>) -> Vec<u8> {
     if is_err {
         buf
     } else {
-        res.as_bytes().iter().map(|&x| x).collect::<Vec<_>>()
+        res.as_bytes().iter().cloned().collect::<Vec<_>>()
     }
 }
