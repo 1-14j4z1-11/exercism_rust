@@ -20,6 +20,7 @@ impl Program {
         let prog = Command::new(self.shell)
             .args(&self.args)
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()?;
 
         prog.wait_with_output()
@@ -30,6 +31,7 @@ impl Program {
             .args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()?;
 
         let stdin = prog.stdin.as_mut().unwrap();
@@ -47,16 +49,20 @@ impl Program {
     }
 
     fn shell_args_from(prog_name: &str, args: &[&str]) -> Vec<String> {
-        let first_args = if cfg!(target_os = "windows") {
+        if cfg!(target_os = "windows") {
             ["/C", prog_name]
+                .iter()
+                .chain(args.iter())
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
         } else {
-            ["-c", prog_name]
-        };
-
-        first_args
-            .iter()
-            .chain(args.iter())
-            .map(|x| x.to_string())
-            .collect::<Vec<_>>()
+            let arg = [prog_name]
+                .iter()
+                .chain(args.iter())
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            vec!["-c".to_string(), arg]
+        }
     }
 }

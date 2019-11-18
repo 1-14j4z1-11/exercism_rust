@@ -67,18 +67,18 @@ impl Sequence {
                     return;
                 }
                 Ok(o) => {
+                    match self.err.as_mut() {
+                        Some(err) => err.write_all(&convert_to_utf8_if_sjis(o.stderr)).unwrap(),
+                        None => self
+                            .out
+                            .write_all(&convert_to_utf8_if_sjis(o.stderr))
+                            .unwrap(),
+                    }
+                    let buf = convert_to_utf8_if_sjis(o.stdout);
+                    pipe_buf = Some(buf);
+
                     if o.status.code().unwrap() != 0 {
-                        match self.err.as_mut() {
-                            Some(err) => err.write_all(&convert_to_utf8_if_sjis(o.stderr)).unwrap(),
-                            None => self
-                                .out
-                                .write_all(&convert_to_utf8_if_sjis(o.stderr))
-                                .unwrap(),
-                        }
                         return;
-                    } else {
-                        let buf = convert_to_utf8_if_sjis(o.stdout);
-                        pipe_buf = Some(buf);
                     }
                 }
             }
@@ -286,6 +286,6 @@ fn convert_to_utf8_if_sjis(buf: Vec<u8>) -> Vec<u8> {
     if is_err {
         buf
     } else {
-        res.as_bytes().iter().cloned().collect::<Vec<_>>()
+        res.as_bytes().to_vec()
     }
 }
