@@ -61,10 +61,8 @@ impl ThreadPool {
             return false;
         }
 
-        {
-            for _ in 0..self.n_threads {
-                self.queue_sender.send(None).unwrap();
-            }
+        for _ in 0..self.n_threads {
+            self.queue_sender.send(None).unwrap();
         }
 
         while !self.join_handles.is_empty() {
